@@ -92,7 +92,11 @@ public class MigrationEngine : IMigrationEngine
         var allTracks = new List<SourceTrack>();
         foreach (var playlistId in job.PlaylistIds)
         {
-            var tracks = await _spotify.GetPlaylistTracksAsync(playlistId, ct);
+            var tracks = await RetryPolicy.ExecuteAsync(
+                () => _spotify.GetPlaylistTracksAsync(playlistId, ct),
+                maxAttempts: 4,
+                baseDelayMs: 250,
+                ct: ct);
             allTracks.AddRange(tracks);
         }
 
@@ -101,7 +105,11 @@ public class MigrationEngine : IMigrationEngine
         var matches = new List<TrackMatchResult>();
         foreach (var track in allTracks)
         {
-            var candidates = await _youtube.SearchTracksAsync(track, ct);
+            var candidates = await RetryPolicy.ExecuteAsync(
+                () => _youtube.SearchTracksAsync(track, ct),
+                maxAttempts: 4,
+                baseDelayMs: 250,
+                ct: ct);
             matches.Add(_matching.Match(track, candidates));
         }
 
@@ -114,9 +122,17 @@ public class MigrationEngine : IMigrationEngine
         var playlistIds = new List<string>();
         foreach (var src in job.PlaylistIds)
         {
-            var pId = await _youtube.CreatePlaylistAsync($"Migrated {src}", ct);
+            var pId = await RetryPolicy.ExecuteAsync(
+                () => _youtube.CreatePlaylistAsync($"Migrated {src}", ct),
+                maxAttempts: 4,
+                baseDelayMs: 250,
+                ct: ct);
             playlistIds.Add(pId);
-            await _youtube.AddTracksAsync(pId, accepted.Select(a => a.YouTubeTrackId!).ToList(), ct);
+            await RetryPolicy.ExecuteAsync(
+                () => _youtube.AddTracksAsync(pId, accepted.Select(a => a.YouTubeTrackId!).ToList(), ct),
+                maxAttempts: 4,
+                baseDelayMs: 250,
+                ct: ct);
         }
 
         _store.SaveTargetPlaylistIds(jobId, playlistIds);
@@ -166,7 +182,13 @@ public class MigrationEngine : IMigrationEngine
         var targetPlaylistIds = _store.GetTargetPlaylistIds(jobId).ToList();
 
         foreach (var p in targetPlaylistIds)
-            await _youtube.AddTracksAsync(p, accepted.Select(a => a.YouTubeTrackId!).ToList(), ct);
+        {
+            await RetryPolicy.ExecuteAsync(
+                () => _youtube.AddTracksAsync(p, accepted.Select(a => a.YouTubeTrackId!).ToList(), ct),
+                maxAttempts: 4,
+                baseDelayMs: 250,
+                ct: ct);
+        }
 
         var report = new MigrationReport
         {

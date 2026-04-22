@@ -151,6 +151,31 @@ app.MapGet("/v1/jobs/{id:guid}/report", (Guid id, IMigrationStore store) =>
     return report is null ? Results.NotFound() : Results.Ok(report);
 });
 
+app.MapGet("/v1/jobs/{id:guid}/report/export.json", (Guid id, IMigrationStore store) =>
+{
+    var report = store.GetReport(id);
+    if (report is null) return Results.NotFound();
+
+    return Results.File(
+        System.Text.Json.JsonSerializer.SerializeToUtf8Bytes(report, new System.Text.Json.JsonSerializerOptions { WriteIndented = true }),
+        "application/json",
+        fileDownloadName: $"migration-report-{id}.json");
+});
+
+app.MapGet("/v1/jobs/{id:guid}/report/export.csv", (Guid id, IMigrationStore store) =>
+{
+    var report = store.GetReport(id);
+    if (report is null) return Results.NotFound();
+
+    var csv = string.Join("\n", new[]
+    {
+        "job_id,total_tracks,matched,needs_review,skipped,migrated,target_playlist_ids",
+        $"{report.JobId},{report.TotalTracks},{report.Matched},{report.NeedsReview},{report.Skipped},{report.Migrated},\"{string.Join("|", report.TargetPlaylistIds)}\""
+    });
+
+    return Results.File(System.Text.Encoding.UTF8.GetBytes(csv), "text/csv", fileDownloadName: $"migration-report-{id}.csv");
+});
+
 app.MapGet("/v1/queue/pending", (IJobQueue queue) => Results.Ok(queue.PeekAll()));
 
 app.Run();

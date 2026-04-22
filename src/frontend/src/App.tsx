@@ -191,6 +191,10 @@ export function App() {
       {report && (
         <section style={{ marginTop: 24 }}>
           <h2>Report</h2>
+          <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
+            <a href={`${API_BASE}/v1/jobs/${jobId}/report/export.json`} target="_blank" rel="noreferrer">Download JSON</a>
+            <a href={`${API_BASE}/v1/jobs/${jobId}/report/export.csv`} target="_blank" rel="noreferrer">Download CSV</a>
+          </div>
           <pre style={{ background: '#111', color: '#eee', padding: 12, borderRadius: 8, overflowX: 'auto' }}>
             {JSON.stringify(report, null, 2)}
           </pre>
