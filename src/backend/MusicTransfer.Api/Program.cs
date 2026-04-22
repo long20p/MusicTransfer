@@ -1,5 +1,3 @@
-using System.Collections.Concurrent;
-using System.Text;
 using MusicTransfer.Api.Models;
 using MusicTransfer.Api.Services;
 
@@ -8,15 +6,21 @@ var builder = WebApplication.CreateBuilder(args);
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.Configure<OAuthOptions>(builder.Configuration.GetSection("Spotify"));
 builder.Services.Configure<OAuthOptions>(builder.Configuration.GetSection("Google"));
+
 builder.Services.AddSingleton<IMigrationStore, InMemoryMigrationStore>();
 builder.Services.AddSingleton<IOAuthStateStore, InMemoryOAuthStateStore>();
 builder.Services.AddSingleton<IJobQueue, InMemoryJobQueue>();
+
+builder.Services.AddSingleton<ISpotifyClient, MockSpotifyClient>();
+builder.Services.AddSingleton<IYouTubeMusicClient, MockYouTubeMusicClient>();
+builder.Services.AddSingleton<IMatchingService, MatchingService>();
+builder.Services.AddSingleton<IMigrationEngine, MigrationEngine>();
 
 var app = builder.Build();
 
 app.MapGet("/health", () => Results.Ok(new { status = "ok", service = "api" }));
 
-app.MapGet("/v1/auth/spotify/start", (HttpContext ctx, IOAuthStateStore stateStore, IConfiguration config) =>
+app.MapGet("/v1/auth/spotify/start", (IOAuthStateStore stateStore, IConfiguration config) =>
 {
     var state = stateStore.CreateState("spotify");
     var clientId = config["Spotify:ClientId"] ?? "SPOTIFY_CLIENT_ID";
@@ -27,7 +31,7 @@ app.MapGet("/v1/auth/spotify/start", (HttpContext ctx, IOAuthStateStore stateSto
     return Results.Ok(new OAuthStartResponse("spotify", state, url));
 });
 
-app.MapGet("/v1/auth/google/start", (HttpContext ctx, IOAuthStateStore stateStore, IConfiguration config) =>
+app.MapGet("/v1/auth/google/start", (IOAuthStateStore stateStore, IConfiguration config) =>
 {
     var state = stateStore.CreateState("google");
     var clientId = config["Google:ClientId"] ?? "GOOGLE_CLIENT_ID";
@@ -46,9 +50,9 @@ app.MapGet("/v1/auth/spotify/callback", (string? code, string? state, IOAuthStat
     if (!stateStore.ValidateAndConsume(state, "spotify"))
         return Results.BadRequest(new { error = "invalid state" });
 
-    // Milestone-1 skeleton: store only provider-link marker, token exchange is next milestone.
+    // Milestone-2: token exchange skeleton placeholder
     store.LinkProvider("demo-user", "spotify", "oauth-code-received");
-    return Results.Ok(new OAuthCallbackResponse("spotify", true, "OAuth callback validated. Token exchange to be added in Milestone 2."));
+    return Results.Ok(new OAuthCallbackResponse("spotify", true, "Spotify account linked (token exchange to be completed in production setup)."));
 });
 
 app.MapGet("/v1/auth/google/callback", (string? code, string? state, IOAuthStateStore stateStore, IMigrationStore store) =>
@@ -60,7 +64,7 @@ app.MapGet("/v1/auth/google/callback", (string? code, string? state, IOAuthState
         return Results.BadRequest(new { error = "invalid state" });
 
     store.LinkProvider("demo-user", "google", "oauth-code-received");
-    return Results.Ok(new OAuthCallbackResponse("google", true, "OAuth callback validated. Token exchange to be added in Milestone 2."));
+    return Results.Ok(new OAuthCallbackResponse("google", true, "Google account linked (token exchange to be completed in production setup)."));
 });
 
 app.MapGet("/v1/providers/links", (IMigrationStore store) =>
@@ -81,94 +85,43 @@ app.MapGet("/v1/jobs/{id:guid}", (Guid id, IMigrationStore store) =>
     return job is null ? Results.NotFound() : Results.Ok(job);
 });
 
+app.MapPost("/v1/jobs/{id:guid}/run", async (Guid id, IMigrationStore store, IMigrationEngine engine, CancellationToken ct) =>
+{
+    var job = store.GetJob(id);
+    if (job is null) return Results.NotFound();
+
+    var report = await engine.RunAsync(id, ct);
+    return Results.Ok(report);
+});
+
+app.MapGet("/v1/jobs/{id:guid}/review-items", (Guid id, IMigrationStore store) =>
+{
+    var items = store.GetMatchResults(id)
+        .Where(m => m.Status == "review")
+        .Select(m => new
+        {
+            m.SpotifyTrackId,
+            source = m.SourceTrack,
+            m.Confidence,
+            candidates = m.Candidates.Select(c => new { c.YouTubeTrackId, c.Title, c.Artist, c.DurationMs, c.Isrc })
+        })
+        .ToList();
+
+    return Results.Ok(items);
+});
+
+app.MapPost("/v1/jobs/{id:guid}/review-decisions", async (Guid id, SubmitReviewRequest req, IMigrationEngine engine, CancellationToken ct) =>
+{
+    var report = await engine.ApplyReviewAndFinalizeAsync(id, req.Decisions, ct);
+    return Results.Ok(report);
+});
+
+app.MapGet("/v1/jobs/{id:guid}/report", (Guid id, IMigrationStore store) =>
+{
+    var report = store.GetReport(id);
+    return report is null ? Results.NotFound() : Results.Ok(report);
+});
+
 app.MapGet("/v1/queue/pending", (IJobQueue queue) => Results.Ok(queue.PeekAll()));
 
 app.Run();
-
-namespace MusicTransfer.Api.Services
-{
-    public interface IMigrationStore
-    {
-        MigrationJob CreateJob(CreateJobRequest request);
-        MigrationJob? GetJob(Guid id);
-        void LinkProvider(string userId, string provider, string state);
-        Dictionary<string, string> GetLinkedProviders(string userId);
-    }
-
-    public class InMemoryMigrationStore : IMigrationStore
-    {
-        private readonly Dictionary<Guid, MigrationJob> _jobs = new();
-        private readonly ConcurrentDictionary<string, Dictionary<string, string>> _providerLinks = new();
-
-        public MigrationJob CreateJob(CreateJobRequest request)
-        {
-            var job = new MigrationJob
-            {
-                Id = Guid.NewGuid(),
-                CreatedAtUtc = DateTime.UtcNow,
-                SourceProvider = "spotify",
-                TargetProvider = "youtube-music",
-                PlaylistIds = request.PlaylistIds,
-                Status = "queued"
-            };
-
-            _jobs[job.Id] = job;
-            return job;
-        }
-
-        public MigrationJob? GetJob(Guid id) => _jobs.GetValueOrDefault(id);
-
-        public void LinkProvider(string userId, string provider, string state)
-        {
-            var existing = _providerLinks.GetOrAdd(userId, _ => new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase));
-            existing[provider] = state;
-        }
-
-        public Dictionary<string, string> GetLinkedProviders(string userId)
-        {
-            return _providerLinks.TryGetValue(userId, out var links)
-                ? new Dictionary<string, string>(links)
-                : new Dictionary<string, string>();
-        }
-    }
-
-    public interface IOAuthStateStore
-    {
-        string CreateState(string provider);
-        bool ValidateAndConsume(string state, string provider);
-    }
-
-    public class InMemoryOAuthStateStore : IOAuthStateStore
-    {
-        private readonly ConcurrentDictionary<string, string> _states = new();
-
-        public string CreateState(string provider)
-        {
-            var raw = $"{provider}:{Guid.NewGuid():N}:{DateTimeOffset.UtcNow.ToUnixTimeSeconds()}";
-            var state = Convert.ToBase64String(Encoding.UTF8.GetBytes(raw));
-            _states[state] = provider;
-            return state;
-        }
-
-        public bool ValidateAndConsume(string state, string provider)
-        {
-            if (!_states.TryRemove(state, out var actualProvider)) return false;
-            return string.Equals(actualProvider, provider, StringComparison.OrdinalIgnoreCase);
-        }
-    }
-
-    public interface IJobQueue
-    {
-        void Enqueue(MigrationRequested message);
-        IReadOnlyCollection<MigrationRequested> PeekAll();
-    }
-
-    public class InMemoryJobQueue : IJobQueue
-    {
-        private readonly ConcurrentQueue<MigrationRequested> _queue = new();
-
-        public void Enqueue(MigrationRequested message) => _queue.Enqueue(message);
-
-        public IReadOnlyCollection<MigrationRequested> PeekAll() => _queue.ToArray();
-    }
-}
