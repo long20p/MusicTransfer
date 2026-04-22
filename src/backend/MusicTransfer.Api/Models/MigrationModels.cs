@@ -14,3 +14,14 @@ public class MigrationJob
     public DateTime CreatedAtUtc { get; set; }
     public List<string> PlaylistIds { get; set; } = new();
 }
+
+public record OAuthStartResponse(string Provider, string State, string AuthorizationUrl);
+public record OAuthCallbackResponse(string Provider, bool Linked, string Message);
+public record MigrationRequested(Guid JobId, string UserId, IReadOnlyCollection<string> PlaylistIds);
+
+public class OAuthOptions
+{
+    public string? ClientId { get; set; }
+    public string? ClientSecret { get; set; }
+    public string? RedirectUri { get; set; }
+}
