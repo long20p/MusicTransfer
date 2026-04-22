@@ -1,4 +1,4 @@
-# Milestone 3 — Report Export + Retry Hardening
+# Milestone 3 — Report Export + Retry Hardening (Implemented)
 
 ## Added report exports
 - `GET /v1/jobs/{id}/report/export.json`
@@ -9,4 +9,4 @@
 - Applied retries to Spotify fetch, YouTube search, playlist creation, and track insert operations in `MigrationEngine`.
 
 ## UI improvements
-- Frontend report section now includes one-click JSON/CSV download links.
+- Frontend report section includes one-click JSON/CSV download links.

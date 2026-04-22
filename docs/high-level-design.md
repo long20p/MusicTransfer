@@ -39,15 +39,16 @@ Migrate Spotify playlists to YouTube Music using a React TypeScript frontend and
 - Run Worker (`dotnet run`)
 - Run frontend (`npm run dev`)
 
-## Azure Deployment (target)
+## Azure Deployment
+- Current mode: manual deployment via Azure CLI + Bicep.
 - Frontend: Azure Static Web Apps (or App Service)
 - API: Azure App Service / Container Apps
 - Worker: Container Apps Jobs or App Service background process
 - Data: Azure Database for PostgreSQL + Azure Cache for Redis
 - Secrets: Key Vault + Managed Identity
 
-## MVP Milestones
-1. Foundation + auth wiring
-2. Migration pipeline + matching engine v1
-3. Manual review and report
-4. Hardening (retry, observability, runbooks)
+## Milestone Status
+1. Foundation + auth wiring — implemented
+2. Migration pipeline + matching engine v1 — implemented
+3. Manual review and report — implemented
+4. Hardening (retry, observability, runbooks) — implemented baseline

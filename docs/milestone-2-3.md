@@ -1,4 +1,4 @@
-# Milestones 2 & 3 — Implementation Summary
+# Milestones 2 & 3 — Implementation Summary (Implemented)
 
 ## Milestone 2 (Migration Core)
 - Added provider client contracts and mock implementations:
@@ -31,5 +31,6 @@
   - show report JSON
 
 ## Notes
-- Current implementation uses in-memory storage and mock provider clients.
-- Real OAuth token exchange, persistent DB, and external queue wiring are tracked for production hardening.
+- The migration pipeline currently uses mock provider clients for deterministic local behavior.
+- OAuth token exchange is still a production-hardening follow-up.
+- Database/queue infrastructure wiring exists and can be switched from in-memory to external services via configuration.

@@ -1,6 +1,6 @@
-# Milestone 1 — Foundation Completion
+# Milestone 1 — Foundation Completion (Implemented)
 
-This change closes remaining M1 foundation gaps:
+This document summarizes the delivered M1 foundation scope.
 
 ## Added
 - EF Core + PostgreSQL wiring in API (`AppDbContext` + entities)
@@ -17,4 +17,4 @@ This change closes remaining M1 foundation gaps:
 - If Postgres connection string exists, EF Core DbContext is enabled.
 
 ## Notes
-- This keeps local dev friction low while enabling production-backed infra wiring.
+- This keeps local development friction low while enabling production-backed infra wiring.
