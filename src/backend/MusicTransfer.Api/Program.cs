@@ -1,5 +1,8 @@
+using Microsoft.EntityFrameworkCore;
+using MusicTransfer.Api.Data;
 using MusicTransfer.Api.Models;
 using MusicTransfer.Api.Services;
+using StackExchange.Redis;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -9,7 +12,23 @@ builder.Services.Configure<OAuthOptions>(builder.Configuration.GetSection("Googl
 
 builder.Services.AddSingleton<IMigrationStore, InMemoryMigrationStore>();
 builder.Services.AddSingleton<IOAuthStateStore, InMemoryOAuthStateStore>();
-builder.Services.AddSingleton<IJobQueue, InMemoryJobQueue>();
+
+var postgres = builder.Configuration.GetConnectionString("Postgres");
+if (!string.IsNullOrWhiteSpace(postgres))
+{
+    builder.Services.AddDbContext<AppDbContext>(opts => opts.UseNpgsql(postgres));
+}
+
+var redisConn = builder.Configuration.GetConnectionString("Redis");
+if (!string.IsNullOrWhiteSpace(redisConn))
+{
+    builder.Services.AddSingleton<IConnectionMultiplexer>(_ => ConnectionMultiplexer.Connect(redisConn));
+    builder.Services.AddSingleton<IJobQueue, RedisJobQueue>();
+}
+else
+{
+    builder.Services.AddSingleton<IJobQueue, InMemoryJobQueue>();
+}
 
 builder.Services.AddSingleton<ISpotifyClient, MockSpotifyClient>();
 builder.Services.AddSingleton<IYouTubeMusicClient, MockYouTubeMusicClient>();
@@ -19,6 +38,16 @@ builder.Services.AddSingleton<IMigrationEngine, MigrationEngine>();
 var app = builder.Build();
 
 app.MapGet("/health", () => Results.Ok(new { status = "ok", service = "api" }));
+
+app.MapPost("/v1/db/ensure", async (IServiceProvider sp) =>
+{
+    using var scope = sp.CreateScope();
+    var db = scope.ServiceProvider.GetService<AppDbContext>();
+    if (db is null) return Results.BadRequest(new { error = "Postgres connection not configured" });
+
+    await db.Database.EnsureCreatedAsync();
+    return Results.Ok(new { ensured = true });
+});
 
 app.MapGet("/v1/auth/spotify/start", (IOAuthStateStore stateStore, IConfiguration config) =>
 {
