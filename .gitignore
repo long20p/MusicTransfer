@@ -22,3 +22,6 @@ obj/
 # Coverage
 coverage/
 TestResults/
+
+# TypeScript build state
+*.tsbuildinfo
