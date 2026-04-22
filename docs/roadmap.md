@@ -18,5 +18,5 @@
 
 ## M4 Azure Deploy
 - [x] Bicep templates
-- [x] CI/CD pipelines
+- [ ] CI/CD pipelines (optional; currently manual deploy flow)
 - [x] Monitoring + alerts
