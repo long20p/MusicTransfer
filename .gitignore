@@ -1,23 +1,24 @@
+# General
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.log
+
 # Node
 node_modules/
-*.log
-npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
-
-# Build
-build/
 dist/
-coverage/
+
+# .NET
+bin/
+obj/
+*.user
+*.suo
 
 # Env
 .env
 .env.local
 
-# IDE
-.vscode/
-.idea/
-.DS_Store
-
-# OS
-Thumbs.db
+# Coverage
+coverage/
+TestResults/

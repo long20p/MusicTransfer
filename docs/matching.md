@@ -1,17 +1,11 @@
-# Track Matching Strategy
+# Matching Strategy
 
-## Priority
 1. ISRC exact match
-2. Normalized title + main artist + duration tolerance
-3. Fuzzy score over title/artist tokens
-4. Manual review bucket for low confidence
+2. Normalized title + artist + duration tolerance
+3. Fuzzy ranking
+4. Manual review bucket for low-confidence candidates
 
-## Confidence levels
-- High (>= 0.9): auto-accept
-- Medium (0.7 - 0.89): auto-accept if no close competitor
-- Low (< 0.7): manual review
-
-## Guardrails
-- Penalize mismatched tags (live/remix/karaoke/instrumental)
-- Preserve source track order
-- Cache accepted mappings for future jobs
+Confidence bands:
+- High >= 0.90
+- Medium 0.70–0.89
+- Low < 0.70

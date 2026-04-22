@@ -1,24 +1,22 @@
-# Roadmap
+# Roadmap (React + .NET 8)
 
-## Milestone 1: Foundation
-- [ ] API scaffold + health endpoint
-- [ ] Worker scaffold + queue wiring
-- [ ] DB schema + migrations
-- [ ] OAuth skeleton for Spotify/Google
+## M1 Foundation
+- [ ] Wire Spotify/Google OAuth in API
+- [ ] Add EF Core + Postgres schema
+- [ ] Add Redis queue contracts
+- [ ] Frontend auth/connect pages
 
-## Milestone 2: Migration core
-- [ ] Import Spotify playlists/tracks
+## M2 Migration Core
+- [ ] Fetch Spotify playlists/tracks
 - [ ] Matching engine v1
-- [ ] YouTube playlist creation
-- [ ] Track insertion with retries
+- [ ] YouTube playlist creation + insert tracks
 
-## Milestone 3: UX + quality
-- [ ] Job progress UI
-- [ ] Manual match review UI
-- [ ] End-to-end tests
-- [ ] Observability dashboard
+## M3 Review + Reporting
+- [ ] Manual review API + UI
+- [ ] Migration report export
+- [ ] Retry/backoff hardening
 
-## Milestone 4: v2
-- [ ] Incremental sync mode
-- [ ] Better duplicate handling
-- [ ] Match learning from user corrections
+## M4 Azure Deploy
+- [ ] Bicep templates
+- [ ] CI/CD pipelines
+- [ ] Monitoring + alerts
