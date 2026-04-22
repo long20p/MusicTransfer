@@ -17,6 +17,6 @@
 - [x] Retry/backoff hardening
 
 ## M4 Azure Deploy
-- [ ] Bicep templates
-- [ ] CI/CD pipelines
-- [ ] Monitoring + alerts
+- [x] Bicep templates
+- [x] CI/CD pipelines
+- [x] Monitoring + alerts
