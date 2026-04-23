@@ -12,6 +12,7 @@
 
 ## Operations
 - `operations-monitoring.md` — monitoring, alerts, and runbook sketch
+- `runtime-status.md` — current runtime implementation state (config, OAuth, worker, provider mode)
 
 ## Notes
 Obsolete docs were removed to avoid duplicate/superseded guidance.
