@@ -1,3 +1,6 @@
+using System.Net.Http.Headers;
+using System.Text;
+using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using MusicTransfer.Api.Data;
 using MusicTransfer.Api.Models;
@@ -30,8 +33,20 @@ else
     builder.Services.AddSingleton<IJobQueue, InMemoryJobQueue>();
 }
 
-builder.Services.AddSingleton<ISpotifyClient, MockSpotifyClient>();
-builder.Services.AddSingleton<IYouTubeMusicClient, MockYouTubeMusicClient>();
+builder.Services.AddHttpClient();
+
+var useMockProviders = builder.Configuration.GetValue<bool>("Providers:UseMockProviders");
+if (useMockProviders)
+{
+    builder.Services.AddSingleton<ISpotifyClient, MockSpotifyClient>();
+    builder.Services.AddSingleton<IYouTubeMusicClient, MockYouTubeMusicClient>();
+}
+else
+{
+    builder.Services.AddSingleton<ISpotifyClient, SpotifyClient>();
+    builder.Services.AddSingleton<IYouTubeMusicClient, YouTubeMusicClient>();
+}
+
 builder.Services.AddSingleton<IMatchingService, MatchingService>();
 builder.Services.AddSingleton<IMigrationEngine, MigrationEngine>();
 
@@ -71,7 +86,7 @@ app.MapGet("/v1/auth/google/start", (IOAuthStateStore stateStore, IConfiguration
     return Results.Ok(new OAuthStartResponse("google", state, url));
 });
 
-app.MapGet("/v1/auth/spotify/callback", (string? code, string? state, IOAuthStateStore stateStore, IMigrationStore store) =>
+app.MapGet("/v1/auth/spotify/callback", async (string? code, string? state, IOAuthStateStore stateStore, IMigrationStore store, IConfiguration config, IHttpClientFactory httpFactory, CancellationToken ct) =>
 {
     if (string.IsNullOrWhiteSpace(code) || string.IsNullOrWhiteSpace(state))
         return Results.BadRequest(new { error = "missing code/state" });
@@ -79,12 +94,43 @@ app.MapGet("/v1/auth/spotify/callback", (string? code, string? state, IOAuthStat
     if (!stateStore.ValidateAndConsume(state, "spotify"))
         return Results.BadRequest(new { error = "invalid state" });
 
-    // Milestone-2: token exchange skeleton placeholder
-    store.LinkProvider("demo-user", "spotify", "oauth-code-received");
-    return Results.Ok(new OAuthCallbackResponse("spotify", true, "Spotify account linked (token exchange to be completed in production setup)."));
+    var clientId = config["Spotify:ClientId"];
+    var clientSecret = config["Spotify:ClientSecret"];
+    var redirectUri = config["Spotify:RedirectUri"] ?? "http://localhost:8080/v1/auth/spotify/callback";
+
+    if (string.IsNullOrWhiteSpace(clientId) || string.IsNullOrWhiteSpace(clientSecret))
+        return Results.BadRequest(new { error = "spotify client credentials are not configured" });
+
+    using var http = httpFactory.CreateClient();
+    using var req = new HttpRequestMessage(HttpMethod.Post, "https://accounts.spotify.com/api/token");
+    req.Headers.Authorization = new AuthenticationHeaderValue("Basic", Convert.ToBase64String(Encoding.UTF8.GetBytes($"{clientId}:{clientSecret}")));
+    req.Content = new FormUrlEncodedContent(new Dictionary<string, string>
+    {
+        ["grant_type"] = "authorization_code",
+        ["code"] = code,
+        ["redirect_uri"] = redirectUri
+    });
+
+    using var res = await http.SendAsync(req, ct);
+    var raw = await res.Content.ReadAsStringAsync(ct);
+    if (!res.IsSuccessStatusCode)
+        return Results.BadRequest(new { error = "spotify token exchange failed", detail = raw });
+
+    using var doc = JsonDocument.Parse(raw);
+    var token = new OAuthTokenRecord
+    {
+        AccessToken = doc.RootElement.GetProperty("access_token").GetString() ?? string.Empty,
+        RefreshToken = doc.RootElement.TryGetProperty("refresh_token", out var rt) ? rt.GetString() : null,
+        Scope = doc.RootElement.TryGetProperty("scope", out var s) ? s.GetString() : null,
+        ExpiresAtUtc = DateTime.UtcNow.AddSeconds(doc.RootElement.TryGetProperty("expires_in", out var e) ? e.GetInt32() : 3600)
+    };
+
+    store.SaveOAuthToken("demo-user", "spotify", token);
+    store.LinkProvider("demo-user", "spotify", "linked");
+    return Results.Ok(new OAuthCallbackResponse("spotify", true, "Spotify account linked."));
 });
 
-app.MapGet("/v1/auth/google/callback", (string? code, string? state, IOAuthStateStore stateStore, IMigrationStore store) =>
+app.MapGet("/v1/auth/google/callback", async (string? code, string? state, IOAuthStateStore stateStore, IMigrationStore store, IConfiguration config, IHttpClientFactory httpFactory, CancellationToken ct) =>
 {
     if (string.IsNullOrWhiteSpace(code) || string.IsNullOrWhiteSpace(state))
         return Results.BadRequest(new { error = "missing code/state" });
@@ -92,8 +138,41 @@ app.MapGet("/v1/auth/google/callback", (string? code, string? state, IOAuthState
     if (!stateStore.ValidateAndConsume(state, "google"))
         return Results.BadRequest(new { error = "invalid state" });
 
-    store.LinkProvider("demo-user", "google", "oauth-code-received");
-    return Results.Ok(new OAuthCallbackResponse("google", true, "Google account linked (token exchange to be completed in production setup)."));
+    var clientId = config["Google:ClientId"];
+    var clientSecret = config["Google:ClientSecret"];
+    var redirectUri = config["Google:RedirectUri"] ?? "http://localhost:8080/v1/auth/google/callback";
+
+    if (string.IsNullOrWhiteSpace(clientId) || string.IsNullOrWhiteSpace(clientSecret))
+        return Results.BadRequest(new { error = "google client credentials are not configured" });
+
+    using var http = httpFactory.CreateClient();
+    using var req = new HttpRequestMessage(HttpMethod.Post, "https://oauth2.googleapis.com/token");
+    req.Content = new FormUrlEncodedContent(new Dictionary<string, string>
+    {
+        ["client_id"] = clientId,
+        ["client_secret"] = clientSecret,
+        ["code"] = code,
+        ["grant_type"] = "authorization_code",
+        ["redirect_uri"] = redirectUri
+    });
+
+    using var res = await http.SendAsync(req, ct);
+    var raw = await res.Content.ReadAsStringAsync(ct);
+    if (!res.IsSuccessStatusCode)
+        return Results.BadRequest(new { error = "google token exchange failed", detail = raw });
+
+    using var doc = JsonDocument.Parse(raw);
+    var token = new OAuthTokenRecord
+    {
+        AccessToken = doc.RootElement.GetProperty("access_token").GetString() ?? string.Empty,
+        RefreshToken = doc.RootElement.TryGetProperty("refresh_token", out var rt) ? rt.GetString() : null,
+        Scope = doc.RootElement.TryGetProperty("scope", out var s) ? s.GetString() : null,
+        ExpiresAtUtc = DateTime.UtcNow.AddSeconds(doc.RootElement.TryGetProperty("expires_in", out var e) ? e.GetInt32() : 3600)
+    };
+
+    store.SaveOAuthToken("demo-user", "google", token);
+    store.LinkProvider("demo-user", "google", "linked");
+    return Results.Ok(new OAuthCallbackResponse("google", true, "Google account linked."));
 });
 
 app.MapGet("/v1/providers/links", (IMigrationStore store) =>

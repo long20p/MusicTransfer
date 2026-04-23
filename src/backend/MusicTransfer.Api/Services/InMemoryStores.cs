@@ -12,6 +12,7 @@ public class InMemoryMigrationStore : IMigrationStore
     private readonly ConcurrentDictionary<Guid, List<TrackMatchResult>> _matches = new();
     private readonly ConcurrentDictionary<Guid, MigrationReport> _reports = new();
     private readonly ConcurrentDictionary<Guid, List<string>> _targetPlaylistIds = new();
+    private readonly ConcurrentDictionary<string, Dictionary<string, OAuthTokenRecord>> _oauthTokens = new();
 
     public MigrationJob CreateJob(CreateJobRequest request, string userId = "demo-user")
     {
@@ -53,6 +54,18 @@ public class InMemoryMigrationStore : IMigrationStore
         return _providerLinks.TryGetValue(userId, out var links)
             ? new Dictionary<string, string>(links)
             : new Dictionary<string, string>();
+    }
+
+    public void SaveOAuthToken(string userId, string provider, OAuthTokenRecord token)
+    {
+        var existing = _oauthTokens.GetOrAdd(userId, _ => new Dictionary<string, OAuthTokenRecord>(StringComparer.OrdinalIgnoreCase));
+        existing[provider] = token;
+    }
+
+    public OAuthTokenRecord? GetOAuthToken(string userId, string provider)
+    {
+        if (!_oauthTokens.TryGetValue(userId, out var tokens)) return null;
+        return tokens.GetValueOrDefault(provider);
     }
 
     public void SaveSourceTracks(Guid jobId, IEnumerable<SourceTrack> tracks) => _sourceTracks[jobId] = tracks.ToList();

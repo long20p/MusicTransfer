@@ -10,6 +10,8 @@ public interface IMigrationStore
 
     void LinkProvider(string userId, string provider, string state);
     Dictionary<string, string> GetLinkedProviders(string userId);
+    void SaveOAuthToken(string userId, string provider, OAuthTokenRecord token);
+    OAuthTokenRecord? GetOAuthToken(string userId, string provider);
 
     void SaveSourceTracks(Guid jobId, IEnumerable<SourceTrack> tracks);
     IReadOnlyCollection<SourceTrack> GetSourceTracks(Guid jobId);

@@ -79,3 +79,11 @@ public class OAuthOptions
     public string? ClientSecret { get; set; }
     public string? RedirectUri { get; set; }
 }
+
+public class OAuthTokenRecord
+{
+    public string AccessToken { get; set; } = string.Empty;
+    public string? RefreshToken { get; set; }
+    public string? Scope { get; set; }
+    public DateTime? ExpiresAtUtc { get; set; }
+}
