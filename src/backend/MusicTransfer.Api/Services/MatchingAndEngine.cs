@@ -159,6 +159,8 @@ public class MigrationEngine : IMigrationEngine
         var matches = _store.GetMatchResults(jobId).ToList();
         var decisionMap = decisions.ToDictionary(d => d.SpotifyTrackId, d => d);
 
+        var newlyAcceptedTrackIds = new List<string>();
+
         foreach (var m in matches.Where(m => m.Status == "review"))
         {
             if (!decisionMap.TryGetValue(m.SpotifyTrackId, out var d))
@@ -171,9 +173,13 @@ public class MigrationEngine : IMigrationEngine
                 continue;
             }
 
+            if (string.IsNullOrWhiteSpace(d.YouTubeTrackId))
+                continue;
+
             m.Status = "accepted";
             m.YouTubeTrackId = d.YouTubeTrackId;
             m.Confidence = Math.Max(m.Confidence, 0.7);
+            newlyAcceptedTrackIds.Add(d.YouTubeTrackId);
         }
 
         _store.SaveMatchResults(jobId, matches);
@@ -181,13 +187,18 @@ public class MigrationEngine : IMigrationEngine
         var accepted = matches.Where(m => m.Status == "accepted" && !string.IsNullOrWhiteSpace(m.YouTubeTrackId)).ToList();
         var targetPlaylistIds = _store.GetTargetPlaylistIds(jobId).ToList();
 
-        foreach (var p in targetPlaylistIds)
+        var uniqueNewlyAcceptedTrackIds = newlyAcceptedTrackIds.Distinct().ToList();
+
+        if (uniqueNewlyAcceptedTrackIds.Count > 0)
         {
-            await RetryPolicy.ExecuteAsync(
-                () => _youtube.AddTracksAsync(p, accepted.Select(a => a.YouTubeTrackId!).ToList(), ct),
-                maxAttempts: 4,
-                baseDelayMs: 250,
-                ct: ct);
+            foreach (var p in targetPlaylistIds)
+            {
+                await RetryPolicy.ExecuteAsync(
+                    () => _youtube.AddTracksAsync(p, uniqueNewlyAcceptedTrackIds, ct),
+                    maxAttempts: 4,
+                    baseDelayMs: 250,
+                    ct: ct);
+            }
         }
 
         var report = new MigrationReport
