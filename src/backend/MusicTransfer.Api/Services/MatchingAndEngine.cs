@@ -29,7 +29,7 @@ public class MatchingService : IMatchingService
             .ToList();
 
         var best = scored.First();
-        var status = best.Score >= 0.9 ? "accepted" : best.Score >= 0.7 ? "accepted" : "review";
+        var status = best.Score >= 0.7 ? "accepted" : "review";
 
         return new TrackMatchResult
         {
