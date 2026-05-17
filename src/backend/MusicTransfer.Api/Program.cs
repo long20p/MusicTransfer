@@ -198,8 +198,19 @@ app.MapPost("/v1/jobs/{id:guid}/run", async (Guid id, IMigrationStore store, IMi
     var job = store.GetJob(id);
     if (job is null) return Results.NotFound();
 
-    var report = await engine.RunAsync(id, ct);
-    return Results.Ok(report);
+    try
+    {
+        var report = await engine.RunAsync(id, ct);
+        return Results.Ok(report);
+    }
+    catch (InvalidOperationException ex) when (ex.Message.Contains("already running", StringComparison.OrdinalIgnoreCase))
+    {
+        return Results.Conflict(new { error = ex.Message });
+    }
+    catch (InvalidOperationException ex)
+    {
+        return Results.BadRequest(new { error = ex.Message });
+    }
 });
 
 app.MapGet("/v1/jobs/{id:guid}/review-items", (Guid id, IMigrationStore store) =>
@@ -220,8 +231,15 @@ app.MapGet("/v1/jobs/{id:guid}/review-items", (Guid id, IMigrationStore store) =
 
 app.MapPost("/v1/jobs/{id:guid}/review-decisions", async (Guid id, SubmitReviewRequest req, IMigrationEngine engine, CancellationToken ct) =>
 {
-    var report = await engine.ApplyReviewAndFinalizeAsync(id, req.Decisions, ct);
-    return Results.Ok(report);
+    try
+    {
+        var report = await engine.ApplyReviewAndFinalizeAsync(id, req.Decisions, ct);
+        return Results.Ok(report);
+    }
+    catch (InvalidOperationException ex)
+    {
+        return Results.BadRequest(new { error = ex.Message });
+    }
 });
 
 app.MapGet("/v1/jobs/{id:guid}/report", (Guid id, IMigrationStore store) =>
