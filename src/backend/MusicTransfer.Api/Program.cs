@@ -13,13 +13,18 @@ builder.Services.AddEndpointsApiExplorer();
 builder.Services.Configure<OAuthOptions>(builder.Configuration.GetSection("Spotify"));
 builder.Services.Configure<OAuthOptions>(builder.Configuration.GetSection("Google"));
 
-builder.Services.AddSingleton<IMigrationStore, InMemoryMigrationStore>();
 builder.Services.AddSingleton<IOAuthStateStore, InMemoryOAuthStateStore>();
 
 var postgres = builder.Configuration.GetConnectionString("Postgres");
 if (!string.IsNullOrWhiteSpace(postgres))
 {
     builder.Services.AddDbContext<AppDbContext>(opts => opts.UseNpgsql(postgres));
+    builder.Services.AddDbContextFactory<AppDbContext>(opts => opts.UseNpgsql(postgres));
+    builder.Services.AddSingleton<IMigrationStore, DbMigrationStore>();
+}
+else
+{
+    builder.Services.AddSingleton<IMigrationStore, InMemoryMigrationStore>();
 }
 
 var redisConn = builder.Configuration.GetConnectionString("Redis");
