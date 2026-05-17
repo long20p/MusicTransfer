@@ -71,7 +71,7 @@ app.MapGet("/v1/auth/spotify/start", (IOAuthStateStore stateStore, IConfiguratio
     var redirectUri = config["Spotify:RedirectUri"] ?? "http://localhost:8080/v1/auth/spotify/callback";
     var scope = Uri.EscapeDataString("playlist-read-private playlist-read-collaborative");
 
-    var url = $"https://accounts.spotify.com/authorize?response_type=code&client_id={Uri.EscapeDataString(clientId)}&scope={scope}&redirect_uri={Uri.EscapeDataString(redirectUri)}&state={state}";
+    var url = $"https://accounts.spotify.com/authorize?response_type=code&client_id={Uri.EscapeDataString(clientId)}&scope={scope}&redirect_uri={Uri.EscapeDataString(redirectUri)}&state={Uri.EscapeDataString(state)}";
     return Results.Ok(new OAuthStartResponse("spotify", state, url));
 });
 
@@ -82,7 +82,7 @@ app.MapGet("/v1/auth/google/start", (IOAuthStateStore stateStore, IConfiguration
     var redirectUri = config["Google:RedirectUri"] ?? "http://localhost:8080/v1/auth/google/callback";
     var scope = Uri.EscapeDataString("openid email profile https://www.googleapis.com/auth/youtube");
 
-    var url = $"https://accounts.google.com/o/oauth2/v2/auth?response_type=code&client_id={Uri.EscapeDataString(clientId)}&scope={scope}&redirect_uri={Uri.EscapeDataString(redirectUri)}&access_type=offline&prompt=consent&state={state}";
+    var url = $"https://accounts.google.com/o/oauth2/v2/auth?response_type=code&client_id={Uri.EscapeDataString(clientId)}&scope={scope}&redirect_uri={Uri.EscapeDataString(redirectUri)}&access_type=offline&prompt=consent&state={Uri.EscapeDataString(state)}";
     return Results.Ok(new OAuthStartResponse("google", state, url));
 });
 
