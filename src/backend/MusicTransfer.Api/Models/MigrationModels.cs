@@ -20,6 +20,7 @@ public class MigrationJob
 public class SourceTrack
 {
     public string SpotifyTrackId { get; set; } = string.Empty;
+    public string SourcePlaylistId { get; set; } = string.Empty;
     public string Title { get; set; } = string.Empty;
     public string Artist { get; set; } = string.Empty;
     public int DurationMs { get; set; }

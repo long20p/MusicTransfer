@@ -120,6 +120,8 @@ public class MigrationEngine : IMigrationEngine
         var skipped = matches.Count(m => m.Status == "skipped");
 
         var playlistIds = new List<string>();
+        var createdPlaylistsBySource = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+
         foreach (var src in job.PlaylistIds)
         {
             var pId = await RetryPolicy.ExecuteAsync(
@@ -127,9 +129,18 @@ public class MigrationEngine : IMigrationEngine
                 maxAttempts: 4,
                 baseDelayMs: 250,
                 ct: ct);
+
             playlistIds.Add(pId);
+            createdPlaylistsBySource[src] = pId;
+
+            var acceptedForPlaylist = accepted
+                .Where(a => string.Equals(a.SourceTrack.SourcePlaylistId, src, StringComparison.OrdinalIgnoreCase))
+                .Select(a => a.YouTubeTrackId!)
+                .Distinct()
+                .ToList();
+
             await RetryPolicy.ExecuteAsync(
-                () => _youtube.AddTracksAsync(pId, accepted.Select(a => a.YouTubeTrackId!).ToList(), ct),
+                () => _youtube.AddTracksAsync(pId, acceptedForPlaylist, ct),
                 maxAttempts: 4,
                 baseDelayMs: 250,
                 ct: ct);
@@ -186,19 +197,34 @@ public class MigrationEngine : IMigrationEngine
 
         var accepted = matches.Where(m => m.Status == "accepted" && !string.IsNullOrWhiteSpace(m.YouTubeTrackId)).ToList();
         var targetPlaylistIds = _store.GetTargetPlaylistIds(jobId).ToList();
+        var job = _store.GetJob(jobId) ?? throw new InvalidOperationException("Job not found");
 
-        var uniqueNewlyAcceptedTrackIds = newlyAcceptedTrackIds.Distinct().ToList();
-
-        if (uniqueNewlyAcceptedTrackIds.Count > 0)
+        var playlistMap = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        for (var i = 0; i < job.PlaylistIds.Count && i < targetPlaylistIds.Count; i++)
         {
-            foreach (var p in targetPlaylistIds)
-            {
-                await RetryPolicy.ExecuteAsync(
-                    () => _youtube.AddTracksAsync(p, uniqueNewlyAcceptedTrackIds, ct),
-                    maxAttempts: 4,
-                    baseDelayMs: 250,
-                    ct: ct);
-            }
+            playlistMap[job.PlaylistIds[i]] = targetPlaylistIds[i];
+        }
+
+        var newlyAcceptedBySourcePlaylist = matches
+            .Where(m => m.Status == "accepted" && !string.IsNullOrWhiteSpace(m.YouTubeTrackId))
+            .Where(m => newlyAcceptedTrackIds.Contains(m.YouTubeTrackId!))
+            .Where(m => !string.IsNullOrWhiteSpace(m.SourceTrack.SourcePlaylistId))
+            .GroupBy(m => m.SourceTrack.SourcePlaylistId, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(
+                g => g.Key,
+                g => g.Select(m => m.YouTubeTrackId!).Distinct().ToList(),
+                StringComparer.OrdinalIgnoreCase);
+
+        foreach (var (sourcePlaylistId, trackIds) in newlyAcceptedBySourcePlaylist)
+        {
+            if (!playlistMap.TryGetValue(sourcePlaylistId, out var targetPlaylistId))
+                continue;
+
+            await RetryPolicy.ExecuteAsync(
+                () => _youtube.AddTracksAsync(targetPlaylistId, trackIds, ct),
+                maxAttempts: 4,
+                baseDelayMs: 250,
+                ct: ct);
         }
 
         var report = new MigrationReport
