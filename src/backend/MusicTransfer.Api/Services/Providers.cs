@@ -16,6 +16,7 @@ public class MockSpotifyClient : ISpotifyClient
             tracks.Add(new SourceTrack
             {
                 SpotifyTrackId = $"sp_{playlistId}_{i}",
+                SourcePlaylistId = playlistId,
                 Title = $"Track {(seed + i) % 50}",
                 Artist = $"Artist {(seed + i * 7) % 20}",
                 DurationMs = 180_000 + (i * 1000),
@@ -90,6 +91,7 @@ public class SpotifyClient : ISpotifyClient
             tracks.Add(new SourceTrack
             {
                 SpotifyTrackId = t.GetProperty("id").GetString() ?? string.Empty,
+                SourcePlaylistId = playlistId,
                 Title = t.GetProperty("name").GetString() ?? string.Empty,
                 Artist = artists,
                 DurationMs = t.GetProperty("duration_ms").GetInt32(),

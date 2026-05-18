@@ -13,7 +13,7 @@ public static class RetryPolicy
             {
                 return await action();
             }
-            catch (Exception ex) when (attempt < maxAttempts)
+            catch (Exception ex) when (attempt < maxAttempts && ShouldRetry(ex, ct))
             {
                 lastError = ex;
                 var delay = TimeSpan.FromMilliseconds(baseDelayMs * Math.Pow(2, attempt - 1));
@@ -27,6 +27,19 @@ public static class RetryPolicy
         }
 
         throw new InvalidOperationException($"Operation failed after {maxAttempts} attempts", lastError);
+    }
+    private static bool ShouldRetry(Exception ex, CancellationToken ct)
+    {
+        if (ex is OperationCanceledException && ct.IsCancellationRequested)
+            return false;
+
+        return ex switch
+        {
+            HttpRequestException httpEx => httpEx.StatusCode is null || (int)httpEx.StatusCode >= 500,
+            TimeoutException => true,
+            TaskCanceledException => true,
+            _ => false
+        };
     }
 
     public static async Task ExecuteAsync(Func<Task> action, int maxAttempts = 3, int baseDelayMs = 200, CancellationToken ct = default)

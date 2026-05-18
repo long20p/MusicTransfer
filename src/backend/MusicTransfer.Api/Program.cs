@@ -13,13 +13,18 @@ builder.Services.AddEndpointsApiExplorer();
 builder.Services.Configure<OAuthOptions>(builder.Configuration.GetSection("Spotify"));
 builder.Services.Configure<OAuthOptions>(builder.Configuration.GetSection("Google"));
 
-builder.Services.AddSingleton<IMigrationStore, InMemoryMigrationStore>();
 builder.Services.AddSingleton<IOAuthStateStore, InMemoryOAuthStateStore>();
 
 var postgres = builder.Configuration.GetConnectionString("Postgres");
 if (!string.IsNullOrWhiteSpace(postgres))
 {
     builder.Services.AddDbContext<AppDbContext>(opts => opts.UseNpgsql(postgres));
+    builder.Services.AddDbContextFactory<AppDbContext>(opts => opts.UseNpgsql(postgres));
+    builder.Services.AddSingleton<IMigrationStore, DbMigrationStore>();
+}
+else
+{
+    builder.Services.AddSingleton<IMigrationStore, InMemoryMigrationStore>();
 }
 
 var redisConn = builder.Configuration.GetConnectionString("Redis");
@@ -71,7 +76,7 @@ app.MapGet("/v1/auth/spotify/start", (IOAuthStateStore stateStore, IConfiguratio
     var redirectUri = config["Spotify:RedirectUri"] ?? "http://localhost:8080/v1/auth/spotify/callback";
     var scope = Uri.EscapeDataString("playlist-read-private playlist-read-collaborative");
 
-    var url = $"https://accounts.spotify.com/authorize?response_type=code&client_id={Uri.EscapeDataString(clientId)}&scope={scope}&redirect_uri={Uri.EscapeDataString(redirectUri)}&state={state}";
+    var url = $"https://accounts.spotify.com/authorize?response_type=code&client_id={Uri.EscapeDataString(clientId)}&scope={scope}&redirect_uri={Uri.EscapeDataString(redirectUri)}&state={Uri.EscapeDataString(state)}";
     return Results.Ok(new OAuthStartResponse("spotify", state, url));
 });
 
@@ -82,7 +87,7 @@ app.MapGet("/v1/auth/google/start", (IOAuthStateStore stateStore, IConfiguration
     var redirectUri = config["Google:RedirectUri"] ?? "http://localhost:8080/v1/auth/google/callback";
     var scope = Uri.EscapeDataString("openid email profile https://www.googleapis.com/auth/youtube");
 
-    var url = $"https://accounts.google.com/o/oauth2/v2/auth?response_type=code&client_id={Uri.EscapeDataString(clientId)}&scope={scope}&redirect_uri={Uri.EscapeDataString(redirectUri)}&access_type=offline&prompt=consent&state={state}";
+    var url = $"https://accounts.google.com/o/oauth2/v2/auth?response_type=code&client_id={Uri.EscapeDataString(clientId)}&scope={scope}&redirect_uri={Uri.EscapeDataString(redirectUri)}&access_type=offline&prompt=consent&state={Uri.EscapeDataString(state)}";
     return Results.Ok(new OAuthStartResponse("google", state, url));
 });
 
@@ -198,8 +203,19 @@ app.MapPost("/v1/jobs/{id:guid}/run", async (Guid id, IMigrationStore store, IMi
     var job = store.GetJob(id);
     if (job is null) return Results.NotFound();
 
-    var report = await engine.RunAsync(id, ct);
-    return Results.Ok(report);
+    try
+    {
+        var report = await engine.RunAsync(id, ct);
+        return Results.Ok(report);
+    }
+    catch (InvalidOperationException ex) when (ex.Message.Contains("already running", StringComparison.OrdinalIgnoreCase))
+    {
+        return Results.Conflict(new { error = ex.Message });
+    }
+    catch (InvalidOperationException ex)
+    {
+        return Results.BadRequest(new { error = ex.Message });
+    }
 });
 
 app.MapGet("/v1/jobs/{id:guid}/review-items", (Guid id, IMigrationStore store) =>
@@ -220,8 +236,15 @@ app.MapGet("/v1/jobs/{id:guid}/review-items", (Guid id, IMigrationStore store) =
 
 app.MapPost("/v1/jobs/{id:guid}/review-decisions", async (Guid id, SubmitReviewRequest req, IMigrationEngine engine, CancellationToken ct) =>
 {
-    var report = await engine.ApplyReviewAndFinalizeAsync(id, req.Decisions, ct);
-    return Results.Ok(report);
+    try
+    {
+        var report = await engine.ApplyReviewAndFinalizeAsync(id, req.Decisions, ct);
+        return Results.Ok(report);
+    }
+    catch (InvalidOperationException ex)
+    {
+        return Results.BadRequest(new { error = ex.Message });
+    }
 });
 
 app.MapGet("/v1/jobs/{id:guid}/report", (Guid id, IMigrationStore store) =>

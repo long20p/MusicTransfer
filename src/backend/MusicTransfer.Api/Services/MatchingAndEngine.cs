@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using MusicTransfer.Api.Models;
 
 namespace MusicTransfer.Api.Services;
@@ -28,7 +29,7 @@ public class MatchingService : IMatchingService
             .ToList();
 
         var best = scored.First();
-        var status = best.Score >= 0.9 ? "accepted" : best.Score >= 0.7 ? "accepted" : "review";
+        var status = best.Score >= 0.7 ? "accepted" : "review";
 
         return new TrackMatchResult
         {
@@ -71,6 +72,8 @@ public class MatchingService : IMatchingService
 
 public class MigrationEngine : IMigrationEngine
 {
+    private static readonly ConcurrentDictionary<Guid, SemaphoreSlim> JobLocks = new();
+
     private readonly IMigrationStore _store;
     private readonly ISpotifyClient _spotify;
     private readonly IYouTubeMusicClient _youtube;
@@ -86,78 +89,111 @@ public class MigrationEngine : IMigrationEngine
 
     public async Task<MigrationReport> RunAsync(Guid jobId, CancellationToken ct = default)
     {
-        var job = _store.GetJob(jobId) ?? throw new InvalidOperationException("Job not found");
-        _store.UpdateJobStatus(jobId, "running");
+        var jobLock = JobLocks.GetOrAdd(jobId, _ => new SemaphoreSlim(1, 1));
+        await jobLock.WaitAsync(ct);
 
-        var allTracks = new List<SourceTrack>();
-        foreach (var playlistId in job.PlaylistIds)
+        try
         {
-            var tracks = await RetryPolicy.ExecuteAsync(
-                () => _spotify.GetPlaylistTracksAsync(playlistId, ct),
-                maxAttempts: 4,
-                baseDelayMs: 250,
-                ct: ct);
-            allTracks.AddRange(tracks);
+            var job = _store.GetJob(jobId) ?? throw new InvalidOperationException("Job not found");
+            var existingReport = _store.GetReport(jobId);
+
+            if (string.Equals(job.Status, "running", StringComparison.OrdinalIgnoreCase))
+                throw new InvalidOperationException("Job is already running.");
+
+            if ((string.Equals(job.Status, "completed", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(job.Status, "needs_review", StringComparison.OrdinalIgnoreCase))
+                && existingReport is not null)
+            {
+                return existingReport;
+            }
+
+            _store.UpdateJobStatus(jobId, "running");
+
+            var allTracks = new List<SourceTrack>();
+            foreach (var playlistId in job.PlaylistIds)
+            {
+                var tracks = await RetryPolicy.ExecuteAsync(
+                    () => _spotify.GetPlaylistTracksAsync(playlistId, ct),
+                    maxAttempts: 4,
+                    baseDelayMs: 250,
+                    ct: ct);
+                allTracks.AddRange(tracks);
+            }
+
+            _store.SaveSourceTracks(jobId, allTracks);
+
+            var matches = new List<TrackMatchResult>();
+            foreach (var track in allTracks)
+            {
+                var candidates = await RetryPolicy.ExecuteAsync(
+                    () => _youtube.SearchTracksAsync(track, ct),
+                    maxAttempts: 4,
+                    baseDelayMs: 250,
+                    ct: ct);
+                matches.Add(_matching.Match(track, candidates));
+            }
+
+            _store.SaveMatchResults(jobId, matches);
+
+            var accepted = matches.Where(m => m.Status == "accepted" && !string.IsNullOrWhiteSpace(m.YouTubeTrackId)).ToList();
+            var review = matches.Where(m => m.Status == "review").ToList();
+            var skipped = matches.Count(m => m.Status == "skipped");
+
+            var playlistIds = new List<string>();
+
+            foreach (var src in job.PlaylistIds)
+            {
+                var pId = await RetryPolicy.ExecuteAsync(
+                    () => _youtube.CreatePlaylistAsync($"Migrated {src}", ct),
+                    maxAttempts: 4,
+                    baseDelayMs: 250,
+                    ct: ct);
+
+                playlistIds.Add(pId);
+
+                var acceptedForPlaylist = accepted
+                    .Where(a => string.Equals(a.SourceTrack.SourcePlaylistId, src, StringComparison.OrdinalIgnoreCase))
+                    .Select(a => a.YouTubeTrackId!)
+                    .Distinct()
+                    .ToList();
+
+                await RetryPolicy.ExecuteAsync(
+                    () => _youtube.AddTracksAsync(pId, acceptedForPlaylist, ct),
+                    maxAttempts: 4,
+                    baseDelayMs: 250,
+                    ct: ct);
+            }
+
+            _store.SaveTargetPlaylistIds(jobId, playlistIds);
+
+            var report = new MigrationReport
+            {
+                JobId = jobId,
+                TotalTracks = allTracks.Count,
+                Matched = accepted.Count,
+                NeedsReview = review.Count,
+                Skipped = skipped,
+                Migrated = accepted.Count,
+                TargetPlaylistIds = playlistIds
+            };
+
+            _store.SaveReport(jobId, report);
+            _store.UpdateJobStatus(jobId, review.Any() ? "needs_review" : "completed");
+
+            return report;
         }
-
-        _store.SaveSourceTracks(jobId, allTracks);
-
-        var matches = new List<TrackMatchResult>();
-        foreach (var track in allTracks)
+        finally
         {
-            var candidates = await RetryPolicy.ExecuteAsync(
-                () => _youtube.SearchTracksAsync(track, ct),
-                maxAttempts: 4,
-                baseDelayMs: 250,
-                ct: ct);
-            matches.Add(_matching.Match(track, candidates));
+            jobLock.Release();
         }
-
-        _store.SaveMatchResults(jobId, matches);
-
-        var accepted = matches.Where(m => m.Status == "accepted" && !string.IsNullOrWhiteSpace(m.YouTubeTrackId)).ToList();
-        var review = matches.Where(m => m.Status == "review").ToList();
-        var skipped = matches.Count(m => m.Status == "skipped");
-
-        var playlistIds = new List<string>();
-        foreach (var src in job.PlaylistIds)
-        {
-            var pId = await RetryPolicy.ExecuteAsync(
-                () => _youtube.CreatePlaylistAsync($"Migrated {src}", ct),
-                maxAttempts: 4,
-                baseDelayMs: 250,
-                ct: ct);
-            playlistIds.Add(pId);
-            await RetryPolicy.ExecuteAsync(
-                () => _youtube.AddTracksAsync(pId, accepted.Select(a => a.YouTubeTrackId!).ToList(), ct),
-                maxAttempts: 4,
-                baseDelayMs: 250,
-                ct: ct);
-        }
-
-        _store.SaveTargetPlaylistIds(jobId, playlistIds);
-
-        var report = new MigrationReport
-        {
-            JobId = jobId,
-            TotalTracks = allTracks.Count,
-            Matched = accepted.Count,
-            NeedsReview = review.Count,
-            Skipped = skipped,
-            Migrated = accepted.Count,
-            TargetPlaylistIds = playlistIds
-        };
-
-        _store.SaveReport(jobId, report);
-        _store.UpdateJobStatus(jobId, review.Any() ? "needs_review" : "completed");
-
-        return report;
     }
 
     public async Task<MigrationReport> ApplyReviewAndFinalizeAsync(Guid jobId, IReadOnlyCollection<ReviewDecision> decisions, CancellationToken ct = default)
     {
         var matches = _store.GetMatchResults(jobId).ToList();
         var decisionMap = decisions.ToDictionary(d => d.SpotifyTrackId, d => d);
+
+        var newlyAcceptedTrackIds = new List<string>();
 
         foreach (var m in matches.Where(m => m.Status == "review"))
         {
@@ -171,20 +207,44 @@ public class MigrationEngine : IMigrationEngine
                 continue;
             }
 
+            if (string.IsNullOrWhiteSpace(d.YouTubeTrackId))
+                continue;
+
             m.Status = "accepted";
             m.YouTubeTrackId = d.YouTubeTrackId;
             m.Confidence = Math.Max(m.Confidence, 0.7);
+            newlyAcceptedTrackIds.Add(d.YouTubeTrackId);
         }
 
         _store.SaveMatchResults(jobId, matches);
 
         var accepted = matches.Where(m => m.Status == "accepted" && !string.IsNullOrWhiteSpace(m.YouTubeTrackId)).ToList();
         var targetPlaylistIds = _store.GetTargetPlaylistIds(jobId).ToList();
+        var job = _store.GetJob(jobId) ?? throw new InvalidOperationException("Job not found");
 
-        foreach (var p in targetPlaylistIds)
+        var playlistMap = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        for (var i = 0; i < job.PlaylistIds.Count && i < targetPlaylistIds.Count; i++)
         {
+            playlistMap[job.PlaylistIds[i]] = targetPlaylistIds[i];
+        }
+
+        var newlyAcceptedBySourcePlaylist = matches
+            .Where(m => m.Status == "accepted" && !string.IsNullOrWhiteSpace(m.YouTubeTrackId))
+            .Where(m => newlyAcceptedTrackIds.Contains(m.YouTubeTrackId!))
+            .Where(m => !string.IsNullOrWhiteSpace(m.SourceTrack.SourcePlaylistId))
+            .GroupBy(m => m.SourceTrack.SourcePlaylistId, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(
+                g => g.Key,
+                g => g.Select(m => m.YouTubeTrackId!).Distinct().ToList(),
+                StringComparer.OrdinalIgnoreCase);
+
+        foreach (var (sourcePlaylistId, trackIds) in newlyAcceptedBySourcePlaylist)
+        {
+            if (!playlistMap.TryGetValue(sourcePlaylistId, out var targetPlaylistId))
+                continue;
+
             await RetryPolicy.ExecuteAsync(
-                () => _youtube.AddTracksAsync(p, accepted.Select(a => a.YouTubeTrackId!).ToList(), ct),
+                () => _youtube.AddTracksAsync(targetPlaylistId, trackIds, ct),
                 maxAttempts: 4,
                 baseDelayMs: 250,
                 ct: ct);
